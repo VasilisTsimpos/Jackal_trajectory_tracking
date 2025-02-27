@@ -6,9 +6,11 @@ The Jackal moves in a way to repel from a specific point in its environment. The
 ### Demonstration Clips
 
 *The Jackal repels from the purple point.*
+
 ![Jackal Repelling Demo](./clip1.gif)  
 
 *The Jackal repels from the purple point.*
+
 ![Jackal Repelling Demo ](./clip2.gif)  
 
 
