@@ -7,10 +7,10 @@ The Jackal moves in a way to avoid or repel from a specific point in its environ
 
 ### Demonstration Clips
 
-![Jackal Repelling Demo](./clip1_small.gif)  
+![Jackal Repelling Demo](./clip1.gif)  
 *The Jackal starts moving away from the purple point.*
 
-![Jackal Repelling Demo - Continued](./clip2_small.gif)  
+![Jackal Repelling Demo - Continued](./clip2.gif)  
 *The Jackal continues to navigate while avoiding the repelling point.*
 
 
