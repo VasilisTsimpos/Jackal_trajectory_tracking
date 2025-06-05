@@ -1,101 +1,159 @@
 #!/usr/bin/env python3
-
 import rospy
-import numpy as np
-import math
-from jackal_controll import Jackal
+from geometry_msgs.msg import PointStamped 
+from nav_msgs.msg import Odometry
+from sensor_msgs.msg import CameraInfo
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from matplotlib.widgets import Slider
+import threading
+import numpy as np
+from numpy import sin, cos, pi
+import math
 
-if __name__ == "__main__":
-    try:
-        robot = Jackal(10)
+class InteractivePoint:
+    def __init__(self):
+        rospy.init_node("interactive_point", anonymous=True)
+        self.point_pub = rospy.Publisher("/object_coordinates", PointStamped, queue_size=10)
+        self.odom_sub = rospy.Subscriber("/odometry/filtered", Odometry, self.__getPoseInfo)
+        self.camera_info_sub = rospy.Subscriber("/camera/color/camera_info", CameraInfo, self.__getCameraInfo)
+        self.rate = rospy.Rate(30)
+        self.x = 0
+        self.y = 0
+        self.z = 0.0  # Default Z value, adjustable via slider
+        self.theta = 0
+        self.dots = None
+        self.fov_patch = None
+        self.x_data = [0]
+        self.y_data = [0]
+        self.cam_fov_horizontal = 60 * (pi/180)
+        self.cam_range = 4.0
+        self.robot_length = 0.5
+        self.robot_width = 0.3
+        self.robot_patch = None
 
-        x_log = []  
-        odom_log = []
-        v_log = []
-        v_cmd_log = []
-        a_log = []
-        t_log = []
-        calc_log = []
-        time = 0
-        tf = 5 
+    def __getCameraInfo(self, data):
+        fx = data.K[0]
+        width = data.width
+        self.cam_fov_horizontal = 2 * math.atan2(width/2, fx)
 
-        rate = robot.getRate()
+    def __getPoseInfo(self, data):
+        position = data.pose.pose.position
+        self.X, self.Y = position.x, position.y
+        orientation = data.pose.pose.orientation 
+        self.theta = 2 * math.atan2(orientation.z, orientation.w)
 
-        Pb = robot.getPosition()
-        Pb0 = Pb
-        Pd = np.array([[1.0], [0.0], Pb[2]]) # desired position from robots frame
-        
-        R0b = robot.getRotationMatrix()
+    def create_robot_box(self, x, y, theta):
+        l, w = self.robot_length, self.robot_width
+        corners = np.array([
+            [-l/2, -l/2,  l/2,  l/2, -l/2],
+            [-w/2,  w/2,  w/2, -w/2, -w/2]
+        ])
+        R = np.array([
+            [cos(theta), -sin(theta)],
+            [sin(theta),  cos(theta)]
+        ])
+        transformed = R @ corners + np.array([[x], [y]])
+        return list(zip(transformed[0, :], transformed[1, :]))
 
-        Pd0 = Pb + R0b @ Pd # Desired position from the inertial frame 
+    def publisher(self):
+        try:
+            while not rospy.is_shutdown():
+                point_msg = PointStamped()
+                point_msg.header.frame_id = 'odom'
+                point_msg.header.stamp = rospy.Time.now()
+                point_msg.point.x = self.x 
+                point_msg.point.y = self.y 
+                point_msg.point.z = self.z  # Controlled by slider
+                self.point_pub.publish(point_msg)
+                self.rate.sleep()
+        except rospy.ROSInterruptException:
+            pass
 
-        print("Iniitial pos: ", Pb.T, ", Desired pos: ", Pd0.T)
+    def start_publishing(self):
+        self.t = threading.Thread(target=self.publisher)
+        self.t.start()
+        return self.t
 
-        while not rospy.is_shutdown():
-            Pb = robot.getPosition()
-            odom_log.append(Pb.reshape(3,).tolist())
+    def on_move(self, event):
+        if event.inaxes == self.ax:  # only update if mouse is in the main plot area
+            if event.xdata is not None and event.ydata is not None:
+                self.x_data[0] = event.xdata
+                self.y_data[0] = event.ydata
+                self.dots.set_data(self.x_data, self.y_data)
+                self.x = event.xdata
+                self.y = event.ydata
+                self.fig.canvas.draw_idle()
 
-            x,v,a = robot.getFifthOrder(time, tf, Pb0, 0, 0, Pd0, 0, 0)
-            v = np.linalg.norm(v)
-            if time > tf:
-                x = Pd0
-                v = 0
-                # a  = 0
-            x_log.append(x.reshape(3,).tolist()) 
-            v_log.append(v)
-            Pd = x
-            
-            R0b = robot.getRotationMatrix()
+    def rotz(self, theta):
+        return np.array([
+            [cos(theta), -sin(theta)],
+            [sin(theta),  cos(theta)]
+        ])
 
-            error = Pd-Pb # Error from the inertial frame 
+    def update_fov(self, event):
+        base_points = np.array([
+            [0, self.cam_range * cos(-self.cam_fov_horizontal/2), self.cam_range * cos(self.cam_fov_horizontal/2)],
+            [0, self.cam_range * sin(-self.cam_fov_horizontal/2), self.cam_range * sin(self.cam_fov_horizontal/2)]
+        ])
+        rotated_points = self.rotz(self.theta) @ base_points + np.array([[self.X], [self.Y]])
+        new_vertices = list(zip(rotated_points[0, :], rotated_points[1, :]))
+        self.fov_patch.set_xy(new_vertices)
+        self.fig.canvas.draw_idle()
+        robot_vertices = self.create_robot_box(self.X, self.Y, self.theta)
+        self.robot_patch.set_xy(robot_vertices)
 
-            errorb = R0b.T @ error # Error from the robots frame
+    def plot(self):
 
-            linear_v = 10 * errorb[0]
-            v_cmd_log.append(linear_v)
-            
-            calc_log.append(robot.calcVelocity())
+        self.fig, ax = plt.subplots()
+        self.ax = ax
+        plt.subplots_adjust(right=0.85)  # Room for vertical slider on the right
 
-            robot.setLinearSpeed(linear_v)
+        ax.set_xlim(-6.5, 6.5)
+        ax.set_ylim(-6.5, 6.5)
+        ax.set_aspect('equal')
+        ax.set_xlabel('X -> (m)')
+        ax.set_ylabel('Y -> (m)')
+        ax.grid()
 
-            
-            robot.setRobotSpeed()        
+        base_points = np.array([
+            [0, self.cam_range * cos(-self.cam_fov_horizontal/2), self.cam_range * cos(self.cam_fov_horizontal/2)],
+            [0, self.cam_range * sin(-self.cam_fov_horizontal/2), self.cam_range * sin(self.cam_fov_horizontal/2)]
+        ])
+        rotated_points = self.rotz(self.theta) @ base_points + np.array([[self.X], [self.Y]]) 
+        polygon_vertices = list(zip(rotated_points[0, :], rotated_points[1, :]))
 
-            t_log.append(time)
-            time += 0.1
-            rate.sleep()
-    except rospy.ROSInterruptException:
-        t = np.array(t_log)
-        x = np.array(x_log).T
-        odom = np.array(odom_log).T
-        vel = np.array(v_log)
-        calc_vel = np.array(calc_log)
-        cmd_vel = np.array(v_cmd_log)
+        self.fov_patch = patches.Polygon(polygon_vertices, closed=True, alpha=0.3)
+        ax.add_patch(self.fov_patch)
+
+        self.dots, = ax.plot([0], [0], 'ro')
+        self.fig.canvas.mpl_connect('motion_notify_event', self.on_move)
+
+        robot_vertices = self.create_robot_box(self.X, self.Y, self.theta)
+        self.robot_patch = patches.Polygon(robot_vertices, closed=True, color='black', alpha=1)
+        ax.add_patch(self.robot_patch)
+
+        # Vertical slider for Z on the right
+        ax_z = plt.axes([0.88, 0.2, 0.03, 0.6])  # [left, bottom, width, height]
+        z_slider = Slider(ax_z, 'Z', -4.0, 4.0, valinit=self.z, orientation='vertical')
+
+        def update_z(val):
+            self.z = z_slider.val
+
+        z_slider.on_changed(update_z)
 
 
-        fig, ax = plt.subplots(2)
-        ax[0].plot(t, x[0,:])
-        ax[0].plot(t, x[1,:])
-        ax[0].plot(t, odom[0,:])
-        ax[0].plot(t, odom[1,:])
-        ax[0].set(xlabel='Time', ylabel='Position')
-        ax[0].legend(['X trajectory position',
-                      'Y trajectory positino',
-                      'X robot position',
-                      'Y robot position'])
-        ax[0].grid()
+        timer = self.fig.canvas.new_timer(interval=100)
+        timer.add_callback(self.update_fov, None)
+        timer.start()
 
+        try:
+            plt.show()
+        except KeyboardInterrupt:
+            pass
 
-        ax[1].plot(t, vel)
-        ax[1].plot(t, calc_vel)
-        ax[1].plot(t, cmd_vel)
-        ax[1].set(xlabel='Time', ylabel='Velocity')
-        ax[1].legend(['Trajectory velocity',
-                      'Calculated velocity',
-                      'Commanded velocity'])
-        ax[1].grid()
-        plt.show()
-
-        print("\n")
-        print("--End--") 
+if __name__ == '__main__':
+    ip = InteractivePoint()
+    t = ip.start_publishing()
+    ip.plot()
+    t.join()
