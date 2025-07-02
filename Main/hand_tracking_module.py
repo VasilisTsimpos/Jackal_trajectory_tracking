@@ -66,7 +66,7 @@ class Hand_Tracking():
         # )
 
         # Set up gesture recognition
-        base_options = python.BaseOptions(model_asset_path='/home/vasilis/cat_ws/src/robot_pkg/src/gesture_recognizer.task')
+        base_options = python.BaseOptions(model_asset_path='/home/csrl/catkin_ws/src/my_robot_controller/src/gesture_recognizer.task')
         options = vision.GestureRecognizerOptions(
             base_options=base_options,
             num_hands=1,  # Detect up to 1 hand  
@@ -113,19 +113,22 @@ class Hand_Tracking():
         np_arr = np.frombuffer(msg.data, np.uint8)
         self.color_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
+        cv2.rectangle(self.color_image, (130, 100), (510, 380), thickness=1, color=(255, 0, 0))
+
         self.getImgDimentions()
 
         """
-        1. Process the Image through the neural network
+        1. Process the Image through the Mediapipe neural network
         2. Calculate the center of the palm if it exists
         3. Get the distance of that point 
         4. Convert to 3D point
+        5. Plot image
         """
         self.mediapipe_process()
         self.findCenterOfPalm()
         end_time = time.time()
         self.getDistance()
-        self.point_3d = self.pixel_to_point()
+        self.point_3d = self.pixel_to_point(optical=False)
         self.plotImage()
 
         self.processing_time = (end_time - start_time) * 1000
@@ -133,6 +136,8 @@ class Hand_Tracking():
         self.avg = self.running_sum / self.iterations
 
         self.iterations += 1
+
+
 
     def getRate(self):
         return self.rate
@@ -205,7 +210,7 @@ class Hand_Tracking():
             self.gesture = top_gesture.category_name
             cv2.putText(self.color_image,
                         f'{self.gesture}',
-                        (10, 50),
+                        (10, 80),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
 
             if self.gesture == 'Closed_Fist':
@@ -242,7 +247,10 @@ class Hand_Tracking():
             distance = self.depth_image[palm_center_y, palm_center_x]
             self.palm_distance = distance
 
+
             cv2.putText(self.color_image, f'{distance} mm', (10,20),
+                        cv2.FONT_HERSHEY_PLAIN, 1.5, (0, 0, 255), 1)
+            cv2.putText(self.color_image, f'({palm_center_x}, {palm_center_y})', (10,50),
                         cv2.FONT_HERSHEY_PLAIN, 1.5, (0, 0, 255), 1)
 
     def pixel_to_point(self, optical=False):
@@ -275,7 +283,7 @@ class Hand_Tracking():
         pixel_msg = PointStamped()
         pixel_msg.header.stamp = rospy.Time.now()
         if self.palm_center == None:
-            pixel_msg.point.x, pixel_msg.point.y, pixel_msg.point.z = 0, 0, 0
+            pixel_msg.point.x, pixel_msg.point.y, pixel_msg.point.z = -1, -1, 0
         else:
             pixel_msg.point.x, pixel_msg.point.y, pixel_msg.point.z = self.palm_center[0], self.palm_center[1], 0
 
