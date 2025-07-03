@@ -113,7 +113,8 @@ class Hand_Tracking():
         np_arr = np.frombuffer(msg.data, np.uint8)
         self.color_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
-        cv2.rectangle(self.color_image, (130, 100), (510, 380), thickness=1, color=(255, 0, 0))
+        cv2.rectangle(self.color_image, (210, 100), (510, 380), thickness=1, color=(255, 0, 0))
+        cv2.line(self.color_image, (80, 0), (80, self.height), thickness=1, color=(255, 0, 0))
 
         self.getImgDimentions()
 

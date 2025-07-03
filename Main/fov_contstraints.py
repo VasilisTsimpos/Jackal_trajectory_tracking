@@ -28,8 +28,9 @@ class FOVController:
         # APF variables
         self.k1 = 8e6 # on x axis
         self.k2 = 3e6 # on y axis
-        self.d0 = 130 
-        self.d1 = 100
+        self.d1 = 210 
+        self.d2 = 100
+        self.a = 80
 
         # Log measurments
         self.position_log = []
@@ -98,28 +99,65 @@ class FOVController:
         y_top = np.clip(self.h - Y, 1e-6, None)
 
         # Compute Artificial Potentials
-        V1 = np.where((X > 0) & (X <= self.d0) & (Y > 0) & (Y < self.h),
-                    (self.k1/2) * (1/x_left - 1/self.d0)**2, 0)
+        V1 = np.where((X > 0) & (X <= self.d1) & (Y > 0) & (Y < self.h),
+                    (self.k1/2) * (1/x_left - 1/self.d1)**2, 0)
 
-        V2 = np.where((X >= self.w - self.d0) & (X < self.w) & (Y > 0) & (Y < self.h),
-                    (self.k1/2) * (1/x_right - 1/self.d0)**2, 0)
+        V2 = np.where((X >= self.w - self.d1) & (X < self.w) & (Y > 0) & (Y < self.h),
+                    (self.k1/2) * (1/x_right - 1/self.d1)**2, 0)
 
-        V3 = np.where((Y > 0) & (Y <= self.d1) & (X > 0) & (X < self.w),
-                    (self.k2/2) * (1/y_bottom - 1/self.d1)**2, 0)
+        V3 = np.where((Y > 0) & (Y <= self.d2) & (X > 0) & (X < self.w),
+                    (self.k2/2) * (1/y_bottom - 1/self.d2)**2, 0)
 
-        V4 = np.where((Y >= self.h - self.d1) & (Y < self.h) & (X > 0) & (X < self.w),
-                    (self.k2/2) * (1/y_top - 1/self.d1)**2, 0)
+        V4 = np.where((Y >= self.h - self.d2) & (Y < self.h) & (X > 0) & (X < self.w),
+                    (self.k2/2) * (1/y_top - 1/self.d2)**2, 0)
 
         V_total = V1 + V2 + V3 + V4
         V_total = np.clip(V_total, None, 1e6)
 
         return V_total
-
+    
+    def create_potential_shifted(self, width, height):
+        x = np.linspace(0.1, width - 0.1, width)
+        y = np.linspace(0.1, height - 0.1, height)
+        X, Y = np.meshgrid(x, y)
+        
+        # Clip to avoid division by zero based on your original expressions
+        x_minus_a = np.clip(X - self.a, 1e-6, None)
+        w_minus_x = np.clip(self.w - X, 1e-6, None)
+        y_clipped = np.clip(Y, 1e-6, None)
+        h_minus_y = np.clip(self.h - Y, 1e-6, None)
+        
+        # V1: (k1/2) * (1/(x-a) - 1/(d1-a))^2 for {a <= x <= d1} & {0 <= y <= h}
+        V1 = np.where((X >= self.a) & (X <= self.d1) & (Y >= 0) & (Y <= self.h),
+                     (self.k1/2) * (1/x_minus_a - 1/(self.d1 - self.a))**2, 0)
+        
+        # V2: (k1/2) * (1/(w-x) - 1/(d1-a))^2 for {w >= x >= w+a-d1} & {0 <= y <= h}
+        V2 = np.where((X <= self.w) & (X >= self.w + self.a - self.d1) & (Y >= 0) & (Y <= self.h),
+                     (self.k1/2) * (1/w_minus_x - 1/(self.d1 - self.a))**2, 0)
+        
+        # V3: 0 for {d1 < x < w - d1 + a} & {0 <= y <= h} (already zero)
+        V3 = np.zeros_like(X)
+        
+        # V4: (k2/2) * (1/y - 1/d2)^2 for {0 <= y <= d2} & {a <= x <= w}
+        V4 = np.where((Y >= 0) & (Y <= self.d2) & (X >= self.a) & (X <= self.w),
+                     (self.k2/2) * (1/y_clipped - 1/self.d2)**2, 0)
+        
+        # V5: (k2/2) * (1/(h-y) - 1/d2)^2 for {h >= y >= h-d2} & {a <= x <= w}
+        V5 = np.where((Y <= self.h) & (Y >= self.h - self.d2) & (X >= self.a) & (X <= self.w),
+                     (self.k2/2) * (1/h_minus_y - 1/self.d2)**2, 0)
+        
+        # V6: 0 for {d2 < y < h - d2} & {a <= x <= w} (already zero)
+        V6 = np.zeros_like(X)
+        
+        V_total = V1 + V2 + V3 + V4 + V5 + V6
+        V_total = np.clip(V_total, None, 1e7)
+        
+        return V_total
     """
             Get the Potential field and its partial derivatives 
     """
     def calculate_potential(self):
-        self.V = self.create_potential(self.w, self.h)
+        self.V = self.create_potential_shifted(self.w, self.h)
         self.dx = ndimage.sobel(self.V, axis=1)
         self.dy = ndimage.sobel(self.V, axis=0)
 
@@ -193,7 +231,7 @@ class FOVController:
         p0i_dot = self.p0i_dot # Interest point velocity 
 
         ds_dp = np.array([
-            [fx / z,      0,  -(x - cx) / z],
+            [fx / z,      0,   -(x - cx) / z],
             [     0,  fy / z,  -(y - cy) / z]
         ])
 
@@ -212,7 +250,7 @@ class FOVController:
 
         input("press enter to continue")
 
-        try:
+        try:#####------------------------------------CONTROL LOOP---------$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
             while not rospy.is_shutdown():
                 # Keep track of time
                 current_time = rospy.Time.now()
@@ -237,14 +275,14 @@ class FOVController:
 
                 # Calculation of the controller
                 Lx = self.calculate_interaction_matrix(x, y)
-                if not dV[0] and not dV[1]:
+                if not dV[0] and not dV[1]:#########################---eimaste sto plateu tou potential---$$$$$$$$$$$
                     new_term = np.array([0, 0])
                 else:
                     new_term = self.calculate_new_term(x, y)
                 
                 if np.linalg.det(Lx) != 0 :
                     Lx_inv = np.linalg.inv(Lx)
-                    Vc = -Lx_inv @ (dV + new_term)
+                    Vc = -Lx_inv @ (dV + 0*new_term) #---CONTROL SIGNAL
                 else:
                     Vc = np.array([0, 0])
 
@@ -277,7 +315,7 @@ class FOVController:
         except rospy.ROSInterruptException:
             pass
 
-    def get_next_filename(self, path='/home/vasilis/cat_ws/src/robot_pkg/src/results/', base_name="exp", extension=".csv"):
+    def get_next_filename(self, path='/home/csrl/catkin_ws/src/my_robot_controller/src/results/', base_name="exp", extension=".csv"):
         """
         Generate the next available filename with incremental numbering
         """
